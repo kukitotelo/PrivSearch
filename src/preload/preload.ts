@@ -16,6 +16,7 @@ export interface PrivSearchAPI {
   newTab: (url?: string) => Promise<{ tabId: string }>;
   closeTab: (tabId: string) => Promise<{ ok?: boolean }>;
   switchTab: (tabId: string) => Promise<{ ok?: boolean }>;
+  setViewVisible: (visible: boolean) => Promise<{ ok?: boolean }>;
 
   // Search
   searchQuery: (query: string) => Promise<{ ok?: boolean; results?: any; error?: string }>;
@@ -41,6 +42,7 @@ const api: PrivSearchAPI = {
   newTab: (url) => ipcRenderer.invoke('browser:newTab', url),
   closeTab: (tabId) => ipcRenderer.invoke('browser:closeTab', tabId),
   switchTab: (tabId) => ipcRenderer.invoke('browser:switchTab', tabId),
+  setViewVisible: (visible) => ipcRenderer.invoke('browser:setViewVisible', visible),
 
   searchQuery: (query) => ipcRenderer.invoke('search:query', query),
   classifyQuery: (query) => ipcRenderer.invoke('search:classify', query),

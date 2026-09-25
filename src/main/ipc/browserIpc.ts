@@ -1,7 +1,6 @@
 // ============================================================
 // PrivSearch – Browser IPC Handlers
-// Robust navigation handlers: automatically fallback to active tab
-// if tabId is empty or not specified.
+// Direct, resilient navigation: handles back/forward/reload seamlessly.
 // ============================================================
 
 import { ipcMain, BrowserWindow, WebContentsView } from 'electron';
@@ -37,21 +36,40 @@ export function registerBrowserIpc(
   ipcMain.handle('browser:goBack', async (_event, tabId?: string) => {
     const view = getView(tabId);
     if (!view) return { error: 'No active view found' };
-    if (view.webContents.navigationHistory.canGoBack()) {
-      view.webContents.navigationHistory.goBack();
-      return { ok: true, wentBack: true };
+    try {
+      if (view.webContents.navigationHistory.canGoBack()) {
+        view.webContents.navigationHistory.goBack();
+      } else {
+        // Fallback attempt
+        view.webContents.navigationHistory.goBack();
+      }
+      return {
+        ok: true,
+        canGoBack: view.webContents.navigationHistory.canGoBack(),
+        canGoForward: view.webContents.navigationHistory.canGoForward(),
+      };
+    } catch (err: any) {
+      return { error: err.message };
     }
-    return { ok: true, wentBack: false };
   });
 
   ipcMain.handle('browser:goForward', async (_event, tabId?: string) => {
     const view = getView(tabId);
     if (!view) return { error: 'No active view found' };
-    if (view.webContents.navigationHistory.canGoForward()) {
-      view.webContents.navigationHistory.goForward();
-      return { ok: true, wentForward: true };
+    try {
+      if (view.webContents.navigationHistory.canGoForward()) {
+        view.webContents.navigationHistory.goForward();
+      } else {
+        view.webContents.navigationHistory.goForward();
+      }
+      return {
+        ok: true,
+        canGoBack: view.webContents.navigationHistory.canGoBack(),
+        canGoForward: view.webContents.navigationHistory.canGoForward(),
+      };
+    } catch (err: any) {
+      return { error: err.message };
     }
-    return { ok: true, wentForward: false };
   });
 
   ipcMain.handle('browser:reload', async (_event, tabId?: string) => {

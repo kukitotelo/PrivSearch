@@ -4,7 +4,7 @@
 // with isolated WebContentsView per tab.
 // ============================================================
 
-import { app, BrowserWindow, WebContentsView } from 'electron';
+import { app, BrowserWindow, WebContentsView, ipcMain } from 'electron';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { NetworkLayer } from './NetworkLayer';
@@ -29,11 +29,11 @@ const sessionManager = new SessionManager(
   permissionManager,
   privacyLayer.getConfig()
 );
-const searchEngine = new SearchEngine();
 
 // Data storage
 const dbPath = path.join(app.getPath('userData'), 'privsearch.db');
 const storage = new SQLiteAdapter(dbPath);
+const searchEngine = new SearchEngine(storage);
 
 // Tab management
 interface ActiveTab {
@@ -42,6 +42,7 @@ interface ActiveTab {
 }
 const tabs = new Map<string, ActiveTab>();
 let activeTabId: string | null = null;
+let isViewVisible = true;
 
 const TOP_BAR_HEIGHT = 80;
 
@@ -50,6 +51,12 @@ function layoutActiveView(): void {
   const tab = tabs.get(activeTabId);
   if (!tab) return;
 
+  if (!isViewVisible) {
+    // Hide the native view by setting bounds to 0
+    tab.view.setBounds({ x: 0, y: TOP_BAR_HEIGHT, width: 0, height: 0 });
+    return;
+  }
+
   const bounds = mainWindow.getContentBounds();
   tab.view.setBounds({
     x: 0,
@@ -57,6 +64,14 @@ function layoutActiveView(): void {
     width: bounds.width,
     height: Math.max(0, bounds.height - TOP_BAR_HEIGHT),
   });
+}
+
+function updateTabNavigationState(tabInfo: TabInfo, view: WebContentsView) {
+  tabInfo.url = view.webContents.getURL();
+  tabInfo.title = view.webContents.getTitle() || tabInfo.url || 'Pestaña';
+  tabInfo.canGoBack = view.webContents.navigationHistory.canGoBack();
+  tabInfo.canGoForward = view.webContents.navigationHistory.canGoForward();
+  mainWindow?.webContents.send('tab:updated', { ...tabInfo });
 }
 
 async function createTab(initialUrl?: string): Promise<string> {
@@ -86,19 +101,26 @@ async function createTab(initialUrl?: string): Promise<string> {
 
   tabs.set(tabId, { info: tabInfo, view });
 
-  // Event handlers for web contents
+  // 1. Loading started
   view.webContents.on('did-start-loading', () => {
     tabInfo.isLoading = true;
-    mainWindow?.webContents.send('tab:updated', tabInfo);
+    updateTabNavigationState(tabInfo, view);
   });
 
+  // 2. Loading stopped
   view.webContents.on('did-stop-loading', () => {
     tabInfo.isLoading = false;
-    tabInfo.url = view.webContents.getURL();
-    tabInfo.title = view.webContents.getTitle() || tabInfo.url;
-    tabInfo.canGoBack = view.webContents.navigationHistory.canGoBack();
-    tabInfo.canGoForward = view.webContents.navigationHistory.canGoForward();
-    mainWindow?.webContents.send('tab:updated', tabInfo);
+    updateTabNavigationState(tabInfo, view);
+  });
+
+  // 3. Regular navigation completed (full page load)
+  view.webContents.on('did-navigate', () => {
+    updateTabNavigationState(tabInfo, view);
+  });
+
+  // 4. In-page navigation completed (SPA, pushState, popstate, hash change)
+  view.webContents.on('did-navigate-in-page', () => {
+    updateTabNavigationState(tabInfo, view);
   });
 
   if (initialUrl && initialUrl !== 'about:blank') {
@@ -127,7 +149,7 @@ function switchTab(tabId: string): void {
   activeTabId = tabId;
   mainWindow.contentView.addChildView(tab.view);
   layoutActiveView();
-  mainWindow.webContents.send('tab:updated', tab.info);
+  updateTabNavigationState(tab.info, tab.view);
 }
 
 function closeTab(tabId: string): void {
@@ -184,6 +206,13 @@ async function createWindow(): Promise<void> {
     closeTab,
     switchTab
   );
+
+  // IPC to toggle native view visibility (for search overlay)
+  ipcMain.handle('browser:setViewVisible', async (_event, visible: boolean) => {
+    isViewVisible = !!visible;
+    layoutActiveView();
+    return { ok: true };
+  });
 
   registerSearchIpc(searchEngine);
   registerPrivacyIpc(privacyLayer, networkLayer);

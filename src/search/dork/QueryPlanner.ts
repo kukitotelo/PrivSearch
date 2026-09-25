@@ -1,8 +1,8 @@
 // ============================================================
 // PrivSearch – QueryPlanner
 // Translates a Dork AST into source-specific query plans.
-// The planner knows which fields map to which sources.
-// The DorkParser knows nothing about sources.
+// When keywords or phrases are present, expands search across
+// ALL available sources (Web, Certificates, DNS, ASN, Local Index).
 // ============================================================
 
 import { DorkNode, FieldExprNode, RangeExprNode } from './DorkTypes';
@@ -19,27 +19,33 @@ export interface FieldFilter {
 export interface QueryPlan {
   sources: SourceType[];
   filters: FieldFilter[];
-  terms: string[];         // bare words / phrases
+  terms: string[];
   rawAst: DorkNode;
 }
 
-// Field-to-source mapping
 const FIELD_SOURCE_MAP: Record<string, SourceType[]> = {
   domain:      ['dns', 'certificates', 'infrastructure', 'local'],
-  hostname:    ['dns', 'infrastructure', 'local'],
-  ip:          ['infrastructure', 'local'],
+  hostname:    ['dns', 'certificates', 'infrastructure', 'local'],
+  ip:          ['infrastructure', 'asn', 'local'],
   asn:         ['asn', 'local'],
   port:        ['infrastructure', 'local'],
   service:     ['infrastructure', 'local'],
   cert:        ['certificates', 'local'],
   certificate: ['certificates', 'local'],
   technology:  ['infrastructure', 'local'],
-  site:        ['web', 'local'],
+  site:        ['web', 'dns', 'certificates', 'local'],
   url:         ['web', 'local'],
   inurl:       ['web', 'local'],
   intitle:     ['web', 'local'],
   intext:      ['web', 'local'],
 };
+
+function addAllSources(plan: QueryPlan): void {
+  const all: SourceType[] = ['web', 'certificates', 'dns', 'asn', 'infrastructure', 'local'];
+  for (const s of all) {
+    if (!plan.sources.includes(s)) plan.sources.push(s);
+  }
+}
 
 function collectNodes(node: DorkNode, plan: QueryPlan): void {
   switch (node.type) {
@@ -68,14 +74,14 @@ function collectNodes(node: DorkNode, plan: QueryPlan): void {
       break;
     }
     case 'PhraseExpr':
-      plan.terms.push(`"${node.value}"`);
-      if (!plan.sources.includes('web')) plan.sources.push('web');
-      if (!plan.sources.includes('local')) plan.sources.push('local');
+      plan.terms.push(node.value);
+      // For general phrases, query all sources to discover everything matching
+      addAllSources(plan);
       break;
     case 'TermExpr':
       plan.terms.push(node.value);
-      if (!plan.sources.includes('web')) plan.sources.push('web');
-      if (!plan.sources.includes('local')) plan.sources.push('local');
+      // For bare words, query all available sources for discovery and dorking
+      addAllSources(plan);
       break;
   }
 }
@@ -90,7 +96,7 @@ export class QueryPlanner {
     };
     collectNodes(ast, qp);
     if (qp.sources.length === 0) {
-      qp.sources = ['web', 'local'];
+      addAllSources(qp);
     }
     return qp;
   }

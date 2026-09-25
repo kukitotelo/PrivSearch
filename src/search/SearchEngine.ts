@@ -1,12 +1,11 @@
 // ============================================================
 // PrivSearch – SearchEngine
-// Orchestrates query classification, planning, and connector dispatch.
-// Respects QueryPlanner to execute ONLY requested connectors.
-// Passes session fetch context so connectors never bypass NetworkLayer.
+// Orchestrates multi-source indexing, querying, and correlation.
+// Automatically indexes new observations to local SQLite database.
 // ============================================================
 
 import { Session, net } from 'electron';
-import { SearchResults, SearchResultSection } from '../main/types';
+import { SearchResults, SearchResultSection, SearchRecord } from '../main/types';
 import { QueryClassifier } from './QueryClassifier';
 import { DorkParser } from './dork/DorkParser';
 import { QueryPlanner, SourceType } from './dork/QueryPlanner';
@@ -16,14 +15,17 @@ import { CertificateConnector } from './connectors/CertificateConnector';
 import { ASNConnector } from './connectors/ASNConnector';
 import { WebConnector } from './connectors/WebConnector';
 import { InfrastructureConnector } from './connectors/InfrastructureConnector';
+import { StorageAdapter } from '../db/StorageAdapter';
 
 export class SearchEngine {
   private classifier = new QueryClassifier();
   private dorkParser = new DorkParser();
   private planner = new QueryPlanner();
   private connectors: Map<string, SourceConnector> = new Map();
+  private storage?: StorageAdapter;
 
-  constructor() {
+  constructor(storage?: StorageAdapter) {
+    this.storage = storage;
     const list: SourceConnector[] = [
       new DNSConnector(),
       new CertificateConnector(),
@@ -45,7 +47,6 @@ export class SearchEngine {
       ? this.planner.plan(parseResult.ast)
       : this.planner.plan({ type: 'TermExpr', value: rawQuery });
 
-    // Ensure session-bound fetch function is passed to connectors
     const safeFetch = (url: string, init?: any) => {
       if (session) {
         return session.fetch(url, init);
@@ -95,6 +96,24 @@ export class SearchEngine {
           error: result.error,
           durationMs: result.durationMs,
         });
+
+        // Persist newly discovered observations to local SQLite database
+        if (this.storage && result.records && result.records.length > 0) {
+          for (const rec of result.records.slice(0, 30)) {
+            this.storage.insertObservation({
+              source: rec.source,
+              sourceType: rec.sourceType,
+              timestamp: rec.timestamp,
+              type: rec.type,
+              value: rec.value,
+              confidence: rec.confidence,
+              rawReference: rec.rawReference,
+              firstSeen: rec.firstSeen,
+              lastSeen: rec.lastSeen,
+              observationType: rec.observationType,
+            }).catch(() => {});
+          }
+        }
       } catch (err: any) {
         resultMap.set(id, {
           label: connector.name,
@@ -107,6 +126,24 @@ export class SearchEngine {
 
     await Promise.all(executionPromises);
 
+    // Query local database for historical / previously observed records
+    let historicalRecords: SearchRecord[] = [];
+    if (this.storage) {
+      try {
+        const localObs = await this.storage.queryObservations({ value: rawQuery.trim() });
+        historicalRecords = localObs.map(o => ({
+          source: `local_db (${o.source})`,
+          sourceType: o.sourceType,
+          timestamp: o.timestamp,
+          type: o.type,
+          value: o.value,
+          confidence: o.confidence,
+          rawReference: o.rawReference,
+          observationType: 'HISTORICAL',
+        }));
+      } catch {}
+    }
+
     return {
       query: classified,
       timestamp: ts,
@@ -115,8 +152,12 @@ export class SearchEngine {
         infrastructure: resultMap.get('infrastructure') || { label: 'Infrastructure', status: 'NOT_REQUESTED', records: [] },
         certificates: resultMap.get('certificates') || { label: 'Certificates', status: 'NOT_REQUESTED', records: [] },
         dns: resultMap.get('dns') || { label: 'DNS', status: 'NOT_REQUESTED', records: [] },
-        historical: { label: 'Historical', status: 'NOT_IMPLEMENTED', records: [], error: 'Phase 5 indexer' },
-        relationships: { label: 'Relationships', status: 'NOT_IMPLEMENTED', records: [], error: 'Phase 7 graph engine' },
+        historical: {
+          label: 'Índice Local / Histórico',
+          status: historicalRecords.length > 0 ? 'OK' : 'EMPTY',
+          records: historicalRecords,
+        },
+        relationships: { label: 'Relaciones Correlacionadas', status: 'NOT_IMPLEMENTED', records: [], error: 'Phase 7 graph engine' },
       },
     };
   }

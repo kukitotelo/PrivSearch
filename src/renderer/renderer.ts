@@ -9,7 +9,6 @@ declare global {
 let currentTabId: string = '';
 
 const addressBar = document.getElementById('address-bar') as HTMLInputElement;
-const tabRow = document.getElementById('tab-row') as HTMLElement;
 const tabPrimary = document.getElementById('tab-primary') as HTMLElement;
 const btnBack = document.getElementById('btn-back') as HTMLButtonElement;
 const btnForward = document.getElementById('btn-forward') as HTMLButtonElement;
@@ -23,7 +22,6 @@ const btnCloseSearch = document.getElementById('btn-close-search') as HTMLButton
 const resultsContainer = document.getElementById('results-container') as HTMLElement;
 const searchQueryDisplay = document.getElementById('search-query-display') as HTMLElement;
 
-// Update UI from Privacy Status
 async function refreshPrivacyStatus() {
   try {
     const status = await window.privSearch.getPrivacyStatus();
@@ -37,19 +35,15 @@ async function refreshPrivacyStatus() {
   }
 }
 
-// Update navigation buttons status (enabled/disabled)
 function updateNavButtons(canGoBack?: boolean, canGoForward?: boolean) {
   if (btnBack) {
-    btnBack.style.opacity = canGoBack ? '1' : '0.4';
-    btnBack.style.cursor = canGoBack ? 'pointer' : 'default';
+    btnBack.style.opacity = canGoBack ? '1' : '0.6';
   }
   if (btnForward) {
-    btnForward.style.opacity = canGoForward ? '1' : '0.4';
-    btnForward.style.cursor = canGoForward ? 'pointer' : 'default';
+    btnForward.style.opacity = canGoForward ? '1' : '0.6';
   }
 }
 
-// Initial state sync
 async function syncActiveTab() {
   try {
     const active = await window.privSearch.getActiveTab();
@@ -68,36 +62,74 @@ async function syncActiveTab() {
   }
 }
 
+async function closeSearchMode() {
+  searchOverlay.style.display = 'none';
+  if (window.privSearch?.setViewVisible) {
+    await window.privSearch.setViewVisible(true);
+  }
+}
+
+async function openSearchMode() {
+  searchOverlay.style.display = 'block';
+  if (window.privSearch?.setViewVisible) {
+    await window.privSearch.setViewVisible(false);
+  }
+}
+
 // Navigation handling (Enter in address bar)
 addressBar?.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const val = addressBar.value.trim();
     if (!val) return;
 
-    // 1. Classify query
     const classified = await window.privSearch.classifyQuery(val);
 
     if (classified.type === 'URL') {
-      searchOverlay.style.display = 'none';
+      await closeSearchMode();
       await window.privSearch.navigate(currentTabId, classified.normalizedValue);
     } else if (classified.type === 'DOMAIN') {
-      searchOverlay.style.display = 'none';
+      await closeSearchMode();
       await window.privSearch.navigate(currentTabId, `https://${classified.normalizedValue}`);
     } else if (classified.type === 'IP') {
-      searchOverlay.style.display = 'none';
+      await closeSearchMode();
       await window.privSearch.navigate(currentTabId, `http://${classified.normalizedValue}`);
     } else {
-      // Dork or Plain text -> Open Search Engine Overlay
+      // Dork or Plain word/phrase -> Indexer and Dork discovery mode
       renderSearchResults(val);
     }
   }
 });
 
-// Search results rendering
+function extractNavigableUrl(value: string, rawRef?: string): string | null {
+  if (rawRef && /^https?:\/\//i.test(rawRef.trim())) {
+    return rawRef.trim();
+  }
+
+  const trimmed = (value || '').trim();
+  if (trimmed.includes('->')) {
+    const parts = trimmed.split('->');
+    const target = parts[parts.length - 1].trim();
+    if (/^https?:\/\//i.test(target)) return target;
+    if (/^[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}$/.test(target)) return `https://${target}`;
+
+    const first = parts[0].trim();
+    if (/^[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}$/.test(first)) return `https://${first}`;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+
+  const cleanDomain = trimmed.replace(/^\*\./, '').trim();
+  if (/^[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}$/.test(cleanDomain)) {
+    return `https://${cleanDomain}`;
+  }
+
+  return null;
+}
+
 async function renderSearchResults(query: string) {
-  searchOverlay.style.display = 'block';
-  searchQueryDisplay.textContent = `Resultados para: "${query}"`;
-  resultsContainer.innerHTML = '<p style="color: #8b9bb4;">Consultando fuentes públicas respetando política de red...</p>';
+  await openSearchMode();
+  searchQueryDisplay.textContent = `Descubrimiento & Dorks: "${query}"`;
+  resultsContainer.innerHTML = '<p style="color: #8b9bb4; font-size: 14px;">Consultando e indexando fuentes públicas (Web, Certificados crt.sh, DNS, ASN, Índice Local)...</p>';
 
   const res = await window.privSearch.searchQuery(query);
   if (!res.ok || !res.results) {
@@ -124,13 +156,24 @@ async function renderSearchResults(query: string) {
     } else if (section.status === 'SOURCE_UNAVAILABLE') {
       html += `<p style="color: #ef4444; font-size: 12px;">SOURCE UNAVAILABLE (${section.error || 'Sin respuesta'})</p>`;
     } else if (!section.records || section.records.length === 0) {
-      html += '<p style="color: #8b9bb4; font-size: 12px;">Sin registros observados.</p>';
+      html += '<p style="color: #8b9bb4; font-size: 12px;">Sin registros observados para esta fuente.</p>';
     } else {
       for (const rec of section.records) {
+        const navUrl = extractNavigableUrl(rec.value, rec.rawReference);
         html += `
-          <div class="record-item">
-            <span>[${rec.type}] ${escapeHtml(rec.value)}</span>
-            <span style="color: #64748b;">${rec.observationType} (${rec.source})</span>
+          <div class="record-item" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #283142;">
+            <div style="flex: 1; word-break: break-all; margin-right: 12px;">
+              <span style="color: #60a5fa; font-weight: bold; margin-right: 6px;">[${rec.type}]</span> 
+              <span>${escapeHtml(rec.value)}</span>
+              <span style="display: block; font-size: 11px; color: #64748b; margin-top: 4px;">
+                Fuente: ${escapeHtml(rec.source)} | Tipo: ${rec.observationType} ${rec.confidence ? '| Confianza: ' + Math.round(rec.confidence * 100) + '%' : ''}
+              </span>
+            </div>
+            ${navUrl ? `
+              <button class="nav-to-target-btn" data-url="${escapeHtml(navUrl)}" style="background: #1e3a8a; color: #93c5fd; border: 1px solid #3b82f6; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;">
+                Navegar ↗
+              </button>
+            ` : ''}
           </div>
         `;
       }
@@ -139,6 +182,18 @@ async function renderSearchResults(query: string) {
   }
 
   resultsContainer.innerHTML = html;
+
+  // Add click listeners to navigate buttons
+  document.querySelectorAll('.nav-to-target-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const targetUrl = (e.currentTarget as HTMLElement).getAttribute('data-url');
+      if (targetUrl) {
+        await closeSearchMode();
+        addressBar.value = targetUrl;
+        await window.privSearch.navigate(currentTabId, targetUrl);
+      }
+    });
+  });
 }
 
 function escapeHtml(str: string): string {
@@ -147,26 +202,30 @@ function escapeHtml(str: string): string {
   })[m] || m);
 }
 
-btnCloseSearch?.addEventListener('click', () => {
-  searchOverlay.style.display = 'none';
+btnCloseSearch?.addEventListener('click', async () => {
+  await closeSearchMode();
 });
 
 // Navigation actions
 btnBack?.addEventListener('click', async () => {
-  searchOverlay.style.display = 'none';
-  await window.privSearch.goBack(currentTabId);
+  await closeSearchMode();
+  const res = await window.privSearch.goBack(currentTabId);
+  if (res) updateNavButtons(res.canGoBack, res.canGoForward);
 });
 
 btnForward?.addEventListener('click', async () => {
-  searchOverlay.style.display = 'none';
-  await window.privSearch.goForward(currentTabId);
+  await closeSearchMode();
+  const res = await window.privSearch.goForward(currentTabId);
+  if (res) updateNavButtons(res.canGoBack, res.canGoForward);
 });
 
 btnReload?.addEventListener('click', async () => {
+  await closeSearchMode();
   await window.privSearch.reload(currentTabId);
 });
 
 btnNewTab?.addEventListener('click', async () => {
+  await closeSearchMode();
   const result = await window.privSearch.newTab('https://duckduckgo.com');
   if (result && result.tabId) {
     currentTabId = result.tabId;
@@ -174,21 +233,22 @@ btnNewTab?.addEventListener('click', async () => {
 });
 
 // Keyboard shortcuts for navigation
-window.addEventListener('keydown', (e) => {
-  // Alt + Left Arrow -> Back
+window.addEventListener('keydown', async (e) => {
   if (e.altKey && e.key === 'ArrowLeft') {
     e.preventDefault();
-    window.privSearch.goBack(currentTabId);
+    await closeSearchMode();
+    const res = await window.privSearch.goBack(currentTabId);
+    if (res) updateNavButtons(res.canGoBack, res.canGoForward);
   }
-  // Alt + Right Arrow -> Forward
   if (e.altKey && e.key === 'ArrowRight') {
     e.preventDefault();
-    window.privSearch.goForward(currentTabId);
+    await closeSearchMode();
+    const res = await window.privSearch.goForward(currentTabId);
+    if (res) updateNavButtons(res.canGoBack, res.canGoForward);
   }
-  // F5 or Ctrl+R -> Reload
   if (e.key === 'F5' || (e.ctrlKey && e.key.toLowerCase() === 'r')) {
     e.preventDefault();
-    window.privSearch.reload(currentTabId);
+    await window.privSearch.reload(currentTabId);
   }
 });
 
@@ -209,4 +269,3 @@ window.privSearch.onTabUpdated((tab: any) => {
 // Startup initialization
 syncActiveTab();
 refreshPrivacyStatus();
-updateNavButtons(false, false);

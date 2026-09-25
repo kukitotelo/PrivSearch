@@ -1,7 +1,7 @@
 // ============================================================
 // PrivSearch – DNSConnector
-// Uses configurable DNS-over-HTTPS endpoint strictly via context.fetch
-// to respect active session proxy rules.
+// Uses configurable DNS-over-HTTPS endpoint strictly via context.fetch.
+// Resolves explicit domains and common TLD variations for keywords.
 // ============================================================
 
 import { SourceConnector, ConnectorResult, ConnectorContext } from './SourceConnector';
@@ -33,12 +33,23 @@ export class DNSConnector implements SourceConnector {
     const domainFilters = plan.filters.filter(f =>
       ['domain', 'hostname', 'site'].includes(f.field)
     );
-    const targets: string[] = [
+
+    const explicitTargets = [
       ...domainFilters.map(f => String(f.value)),
-      ...plan.terms.filter(t => /^[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}$/.test(t.replace(/"/g, ''))),
+      ...plan.terms.filter(t => t.includes('.')),
     ];
 
-    if (targets.length === 0) {
+    // For bare terms without dots (e.g. "kali"), expand with top TLDs
+    const bareTerms = plan.terms.filter(t => !t.includes('.') && t.trim().length >= 2);
+    const expandedTargets: string[] = [];
+    for (const term of bareTerms.slice(0, 2)) {
+      const clean = term.replace(/"/g, '').trim().toLowerCase();
+      expandedTargets.push(`${clean}.com`, `${clean}.org`, `${clean}.io`);
+    }
+
+    const allTargets = Array.from(new Set([...explicitTargets, ...expandedTargets]));
+
+    if (allTargets.length === 0) {
       return {
         source: this.id,
         status: 'OK',
@@ -50,7 +61,7 @@ export class DNSConnector implements SourceConnector {
     const resolverBase = context.dnsResolverUrl || 'https://cloudflare-dns.com/dns-query';
     const records: SearchRecord[] = [];
 
-    for (const target of targets.slice(0, 5)) {
+    for (const target of allTargets.slice(0, 5)) {
       try {
         const queryUrl = `${resolverBase}?name=${encodeURIComponent(target)}&type=ANY`;
         const res = await context.fetch(queryUrl, {
@@ -58,9 +69,7 @@ export class DNSConnector implements SourceConnector {
           signal: AbortSignal.timeout(6000),
         });
 
-        if (!res.ok) {
-          throw new Error(`DNS DoH error HTTP ${res.status}`);
-        }
+        if (!res.ok) continue;
         const data = await res.json();
 
         if (data.Answer) {
@@ -70,7 +79,7 @@ export class DNSConnector implements SourceConnector {
               sourceType: 'dns',
               timestamp: Date.now(),
               type: `DNS_${TYPE_MAP[answer.type] || answer.type}`,
-              value: answer.data,
+              value: `${target} -> ${answer.data}`,
               confidence: 0.95,
               rawReference: queryUrl,
               firstSeen: Date.now(),
@@ -80,15 +89,7 @@ export class DNSConnector implements SourceConnector {
           }
         }
       } catch (err: any) {
-        records.push({
-          source: resolverBase,
-          sourceType: 'dns',
-          timestamp: Date.now(),
-          type: 'DNS_QUERY_FAILURE',
-          value: `Failed resolving ${target}: ${err.message}`,
-          confidence: 0,
-          observationType: 'UNVERIFIED',
-        });
+        // Silently skip unresolvable variations
       }
     }
 

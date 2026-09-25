@@ -1,6 +1,7 @@
 // ============================================================
 // PrivSearch – CertificateConnector
 // Queries crt.sh strictly using context.fetch (session-bound).
+// Accepts both full domains and bare keywords/brands.
 // ============================================================
 
 import { SourceConnector, ConnectorResult, ConnectorContext } from './SourceConnector';
@@ -24,11 +25,12 @@ export class CertificateConnector implements SourceConnector {
 
   async query(plan: QueryPlan, context: ConnectorContext): Promise<ConnectorResult> {
     const start = Date.now();
+    // Gather domain filters + any terms/words of 2 or more characters
     const targets = [
       ...plan.filters
-        .filter(f => ['domain', 'hostname', 'cert', 'certificate'].includes(f.field))
+        .filter(f => ['domain', 'hostname', 'cert', 'certificate', 'site'].includes(f.field))
         .map(f => String(f.value)),
-      ...plan.terms.filter(t => /^[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}$/.test(t.replace(/"/g, ''))),
+      ...plan.terms.filter(t => t.trim().length >= 2),
     ];
 
     if (targets.length === 0) {
@@ -37,9 +39,11 @@ export class CertificateConnector implements SourceConnector {
 
     const records: SearchRecord[] = [];
 
+    // Query up to 3 target terms
     for (const target of targets.slice(0, 3)) {
       try {
-        const queryUrl = `https://crt.sh/?q=${encodeURIComponent(target)}&output=json`;
+        const cleanTarget = target.replace(/"/g, '').trim();
+        const queryUrl = `https://crt.sh/?q=${encodeURIComponent(cleanTarget)}&output=json`;
         const res = await context.fetch(queryUrl, { signal: AbortSignal.timeout(10000) });
 
         if (!res.ok) {
@@ -54,12 +58,13 @@ export class CertificateConnector implements SourceConnector {
 
         const entries = (await res.json()) as any[];
         for (const entry of (entries || []).slice(0, 50)) {
+          const commonName = entry.common_name || entry.name_value || '';
           records.push({
             source: 'crt.sh',
             sourceType: 'certificates',
             timestamp: Date.now(),
             type: 'CERTIFICATE',
-            value: entry.common_name || entry.name_value || '',
+            value: commonName,
             confidence: 1.0,
             rawReference: `https://crt.sh/?id=${entry.id}`,
             firstSeen: entry.not_before ? new Date(entry.not_before).getTime() : undefined,

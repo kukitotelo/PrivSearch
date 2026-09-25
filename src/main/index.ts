@@ -96,8 +96,8 @@ async function createTab(initialUrl?: string): Promise<string> {
     tabInfo.isLoading = false;
     tabInfo.url = view.webContents.getURL();
     tabInfo.title = view.webContents.getTitle() || tabInfo.url;
-    tabInfo.canGoBack = view.webContents.canGoBack();
-    tabInfo.canGoForward = view.webContents.canGoForward();
+    tabInfo.canGoBack = view.webContents.navigationHistory.canGoBack();
+    tabInfo.canGoForward = view.webContents.navigationHistory.canGoForward();
     mainWindow?.webContents.send('tab:updated', tabInfo);
   });
 

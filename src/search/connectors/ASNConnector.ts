@@ -1,9 +1,8 @@
 // ============================================================
 // PrivSearch – ASNConnector
-// Queries bgpview.io via Electron session network stack.
+// Queries bgpview.io strictly using context.fetch (session-bound).
 // ============================================================
 
-import { net } from 'electron';
 import { SourceConnector, ConnectorResult, ConnectorContext } from './SourceConnector';
 import { QueryPlan } from '../dork/QueryPlanner';
 import { SearchRecord, ConnectorCapabilities } from '../../main/types';
@@ -37,10 +36,8 @@ export class ASNConnector implements SourceConnector {
     for (const ip of ipFilters.slice(0, 3)) {
       try {
         const queryUrl = `https://api.bgpview.io/ip/${encodeURIComponent(ip)}`;
-        const opts: any = { signal: AbortSignal.timeout(8000) };
-        if (context.session) opts.session = context.session;
+        const res = await context.fetch(queryUrl, { signal: AbortSignal.timeout(8000) });
 
-        const res = await net.fetch(queryUrl, opts);
         if (res.ok) {
           const data = (await res.json()) as any;
           if (data?.data) {
@@ -75,10 +72,8 @@ export class ASNConnector implements SourceConnector {
       try {
         const num = asn.replace(/^AS/i, '');
         const queryUrl = `https://api.bgpview.io/asn/${encodeURIComponent(num)}`;
-        const opts: any = { signal: AbortSignal.timeout(8000) };
-        if (context.session) opts.session = context.session;
+        const res = await context.fetch(queryUrl, { signal: AbortSignal.timeout(8000) });
 
-        const res = await net.fetch(queryUrl, opts);
         if (res.ok) {
           const data = (await res.json()) as any;
           if (data?.data) {

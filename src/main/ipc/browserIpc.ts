@@ -31,13 +31,13 @@ export function registerBrowserIpc(
 
   ipcMain.handle('browser:goBack', async (_event, tabId: string) => {
     const view = getView(tabId);
-    if (view?.webContents.canGoBack()) view.webContents.goBack();
+    if (view?.webContents.navigationHistory.canGoBack()) view.webContents.navigationHistory.goBack();
     return { ok: true };
   });
 
   ipcMain.handle('browser:goForward', async (_event, tabId: string) => {
     const view = getView(tabId);
-    if (view?.webContents.canGoForward()) view.webContents.goForward();
+    if (view?.webContents.navigationHistory.canGoForward()) view.webContents.navigationHistory.goForward();
     return { ok: true };
   });
 

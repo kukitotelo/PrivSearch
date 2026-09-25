@@ -1,10 +1,9 @@
 // ============================================================
 // PrivSearch – DNSConnector
-// Uses configurable DNS-over-HTTPS endpoint via Electron session fetch
-// or marks as UNVERIFIED / NOT_CONFIGURED.
+// Uses configurable DNS-over-HTTPS endpoint strictly via context.fetch
+// to respect active session proxy rules.
 // ============================================================
 
-import { net } from 'electron';
 import { SourceConnector, ConnectorResult, ConnectorContext } from './SourceConnector';
 import { QueryPlan } from '../dork/QueryPlanner';
 import { SearchRecord, ConnectorCapabilities } from '../../main/types';
@@ -48,26 +47,21 @@ export class DNSConnector implements SourceConnector {
       };
     }
 
-    // Default DoH resolver endpoint (configurable)
     const resolverBase = context.dnsResolverUrl || 'https://cloudflare-dns.com/dns-query';
     const records: SearchRecord[] = [];
 
     for (const target of targets.slice(0, 5)) {
       try {
         const queryUrl = `${resolverBase}?name=${encodeURIComponent(target)}&type=ANY`;
-        const fetchOptions: any = {
+        const res = await context.fetch(queryUrl, {
           headers: { 'Accept': 'application/dns-json' },
           signal: AbortSignal.timeout(6000),
-        };
-        if (context.session) {
-          fetchOptions.session = context.session;
-        }
+        });
 
-        const res = await net.fetch(queryUrl, fetchOptions);
         if (!res.ok) {
           throw new Error(`DNS DoH error HTTP ${res.status}`);
         }
-        const data = await res.json() as any;
+        const data = await res.json();
 
         if (data.Answer) {
           for (const answer of data.Answer) {

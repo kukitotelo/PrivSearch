@@ -1,9 +1,8 @@
 // ============================================================
 // PrivSearch – CertificateConnector
-// Queries crt.sh using the active session proxy route.
+// Queries crt.sh strictly using context.fetch (session-bound).
 // ============================================================
 
-import { net } from 'electron';
 import { SourceConnector, ConnectorResult, ConnectorContext } from './SourceConnector';
 import { QueryPlan } from '../dork/QueryPlanner';
 import { SearchRecord, ConnectorCapabilities } from '../../main/types';
@@ -41,12 +40,8 @@ export class CertificateConnector implements SourceConnector {
     for (const target of targets.slice(0, 3)) {
       try {
         const queryUrl = `https://crt.sh/?q=${encodeURIComponent(target)}&output=json`;
-        const fetchOptions: any = { signal: AbortSignal.timeout(10000) };
-        if (context.session) {
-          fetchOptions.session = context.session;
-        }
+        const res = await context.fetch(queryUrl, { signal: AbortSignal.timeout(10000) });
 
-        const res = await net.fetch(queryUrl, fetchOptions);
         if (!res.ok) {
           return {
             source: this.id,

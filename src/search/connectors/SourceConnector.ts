@@ -1,6 +1,7 @@
 // ============================================================
 // PrivSearch – SourceConnector Interface
-// Connectors must declare their network requirements and capabilities explicitly.
+// Connectors must declare their network requirements explicitly.
+// All network requests must go through context.fetch to respect session proxy rules.
 // ============================================================
 
 import { Session } from 'electron';
@@ -19,6 +20,7 @@ export interface ConnectorContext {
   session?: Session;
   dnsResolverUrl?: string;
   route: string;
+  fetch: (url: string, init?: any) => Promise<any>;
 }
 
 export interface SourceConnector {
@@ -27,10 +29,6 @@ export interface SourceConnector {
   readonly sourceTypes: string[];
   readonly capabilities: ConnectorCapabilities;
 
-  /**
-   * Execute query with context (providing the Electron session network stack).
-   */
   query(plan: QueryPlan, context: ConnectorContext): Promise<ConnectorResult>;
-
   isAvailable(): boolean;
 }

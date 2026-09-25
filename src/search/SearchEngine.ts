@@ -2,10 +2,10 @@
 // PrivSearch – SearchEngine
 // Orchestrates query classification, planning, and connector dispatch.
 // Respects QueryPlanner to execute ONLY requested connectors.
-// Unrequested connectors are marked NOT_REQUESTED without running.
+// Passes session fetch context so connectors never bypass NetworkLayer.
 // ============================================================
 
-import { Session } from 'electron';
+import { Session, net } from 'electron';
 import { SearchResults, SearchResultSection } from '../main/types';
 import { QueryClassifier } from './QueryClassifier';
 import { DorkParser } from './dork/DorkParser';
@@ -40,20 +40,26 @@ export class SearchEngine {
     const ts = Date.now();
     const classified = this.classifier.classify(rawQuery);
 
-    // 1. Parse Dork or plain query into AST
     const parseResult = this.dorkParser.parse(rawQuery);
     const plan = parseResult.success
       ? this.planner.plan(parseResult.ast)
       : this.planner.plan({ type: 'TermExpr', value: rawQuery });
 
+    // Ensure session-bound fetch function is passed to connectors
+    const safeFetch = (url: string, init?: any) => {
+      if (session) {
+        return session.fetch(url, init);
+      }
+      return net.fetch(url, init);
+    };
+
     const context: ConnectorContext = {
       session,
       route: activeRoute,
+      fetch: safeFetch,
     };
 
-    // 2. Identify required sources from plan
     const requestedSources = new Set<SourceType>(plan.sources);
-
     const resultMap = new Map<string, SearchResultSection>();
     const allSourceIds = ['web', 'dns', 'certificates', 'asn', 'infrastructure'];
 

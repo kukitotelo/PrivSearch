@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PrivSearch
+Comment=Navegador de investigación privado con motor de búsqueda y dorks
+Exec=/home/makikas/PrivSearch/start.sh
+Icon=/home/makikas/PrivSearch/assets/icon.png
+Path=/home/makikas/PrivSearch
+Terminal=false
+Categories=Network;WebBrowser;Security;
+StartupNotify=true
+StartupWMClass=privsearch

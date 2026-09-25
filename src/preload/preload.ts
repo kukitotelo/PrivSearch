@@ -8,10 +8,11 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 export interface PrivSearchAPI {
   // Navigation
+  getActiveTab: () => Promise<any>;
   navigate: (tabId: string, url: string) => Promise<{ ok?: boolean; error?: string }>;
-  goBack: (tabId: string) => Promise<{ ok?: boolean }>;
-  goForward: (tabId: string) => Promise<{ ok?: boolean }>;
-  reload: (tabId: string) => Promise<{ ok?: boolean }>;
+  goBack: (tabId?: string) => Promise<{ ok?: boolean; wentBack?: boolean }>;
+  goForward: (tabId?: string) => Promise<{ ok?: boolean; wentForward?: boolean }>;
+  reload: (tabId?: string) => Promise<{ ok?: boolean }>;
   newTab: (url?: string) => Promise<{ tabId: string }>;
   closeTab: (tabId: string) => Promise<{ ok?: boolean }>;
   switchTab: (tabId: string) => Promise<{ ok?: boolean }>;
@@ -32,6 +33,7 @@ export interface PrivSearchAPI {
 }
 
 const api: PrivSearchAPI = {
+  getActiveTab: () => ipcRenderer.invoke('browser:getActiveTab'),
   navigate: (tabId, url) => ipcRenderer.invoke('browser:navigate', tabId, url),
   goBack: (tabId) => ipcRenderer.invoke('browser:goBack', tabId),
   goForward: (tabId) => ipcRenderer.invoke('browser:goForward', tabId),

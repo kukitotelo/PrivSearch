@@ -174,7 +174,12 @@ async function createWindow(): Promise<void> {
   registerBrowserIpc(
     mainWindow,
     sessionManager,
-    (id) => tabs.get(id)?.view,
+    (id?: string) => {
+      if (id && tabs.has(id)) return tabs.get(id)?.view;
+      if (activeTabId && tabs.has(activeTabId)) return tabs.get(activeTabId)?.view;
+      return undefined;
+    },
+    () => (activeTabId ? tabs.get(activeTabId)?.info : undefined),
     createTab,
     closeTab,
     switchTab

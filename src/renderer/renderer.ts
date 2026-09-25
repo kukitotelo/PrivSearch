@@ -1,9 +1,4 @@
 export {};
-// ============================================================
-// PrivSearch – Renderer Process Script
-// Operates under contextIsolation without direct Node.js access.
-// Uses window.privSearch exposed bridge.
-// ============================================================
 
 declare global {
   interface Window {
@@ -14,6 +9,7 @@ declare global {
 let currentTabId: string = '';
 
 const addressBar = document.getElementById('address-bar') as HTMLInputElement;
+const tabRow = document.getElementById('tab-row') as HTMLElement;
 const tabPrimary = document.getElementById('tab-primary') as HTMLElement;
 const btnBack = document.getElementById('btn-back') as HTMLButtonElement;
 const btnForward = document.getElementById('btn-forward') as HTMLButtonElement;
@@ -41,7 +37,38 @@ async function refreshPrivacyStatus() {
   }
 }
 
-// Navigation handling
+// Update navigation buttons status (enabled/disabled)
+function updateNavButtons(canGoBack?: boolean, canGoForward?: boolean) {
+  if (btnBack) {
+    btnBack.style.opacity = canGoBack ? '1' : '0.4';
+    btnBack.style.cursor = canGoBack ? 'pointer' : 'default';
+  }
+  if (btnForward) {
+    btnForward.style.opacity = canGoForward ? '1' : '0.4';
+    btnForward.style.cursor = canGoForward ? 'pointer' : 'default';
+  }
+}
+
+// Initial state sync
+async function syncActiveTab() {
+  try {
+    const active = await window.privSearch.getActiveTab();
+    if (active) {
+      currentTabId = active.id;
+      if (tabPrimary) {
+        tabPrimary.querySelector('span')!.textContent = active.title || 'DuckDuckGo';
+      }
+      if (active.url && active.url !== 'about:blank') {
+        addressBar.value = active.url;
+      }
+      updateNavButtons(active.canGoBack, active.canGoForward);
+    }
+  } catch (err) {
+    console.error('Error syncing active tab:', err);
+  }
+}
+
+// Navigation handling (Enter in address bar)
 addressBar?.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const val = addressBar.value.trim();
@@ -60,12 +87,13 @@ addressBar?.addEventListener('keydown', async (e) => {
       searchOverlay.style.display = 'none';
       await window.privSearch.navigate(currentTabId, `http://${classified.normalizedValue}`);
     } else {
-      // Dork or Plain text -> Open Search Engine
+      // Dork or Plain text -> Open Search Engine Overlay
       renderSearchResults(val);
     }
   }
 });
 
+// Search results rendering
 async function renderSearchResults(query: string) {
   searchOverlay.style.display = 'block';
   searchQueryDisplay.textContent = `Resultados para: "${query}"`;
@@ -123,32 +151,62 @@ btnCloseSearch?.addEventListener('click', () => {
   searchOverlay.style.display = 'none';
 });
 
-btnBack?.addEventListener('click', () => {
-  if (currentTabId) window.privSearch.goBack(currentTabId);
+// Navigation actions
+btnBack?.addEventListener('click', async () => {
+  searchOverlay.style.display = 'none';
+  await window.privSearch.goBack(currentTabId);
 });
 
-btnForward?.addEventListener('click', () => {
-  if (currentTabId) window.privSearch.goForward(currentTabId);
+btnForward?.addEventListener('click', async () => {
+  searchOverlay.style.display = 'none';
+  await window.privSearch.goForward(currentTabId);
 });
 
-btnReload?.addEventListener('click', () => {
-  if (currentTabId) window.privSearch.reload(currentTabId);
+btnReload?.addEventListener('click', async () => {
+  await window.privSearch.reload(currentTabId);
 });
 
-btnNewTab?.addEventListener('click', () => {
-  window.privSearch.newTab('https://duckduckgo.com');
-});
-
-// Tab state updates from main process
-window.privSearch.onTabUpdated((tab: any) => {
-  if (tab) {
-    currentTabId = tab.id;
-    tabPrimary.querySelector('span')!.textContent = tab.title || 'Pestaña';
-    if (tab.url && tab.url !== 'about:blank') {
-      addressBar.value = tab.url;
-    }
+btnNewTab?.addEventListener('click', async () => {
+  const result = await window.privSearch.newTab('https://duckduckgo.com');
+  if (result && result.tabId) {
+    currentTabId = result.tabId;
   }
 });
 
-// Initialize privacy status display
+// Keyboard shortcuts for navigation
+window.addEventListener('keydown', (e) => {
+  // Alt + Left Arrow -> Back
+  if (e.altKey && e.key === 'ArrowLeft') {
+    e.preventDefault();
+    window.privSearch.goBack(currentTabId);
+  }
+  // Alt + Right Arrow -> Forward
+  if (e.altKey && e.key === 'ArrowRight') {
+    e.preventDefault();
+    window.privSearch.goForward(currentTabId);
+  }
+  // F5 or Ctrl+R -> Reload
+  if (e.key === 'F5' || (e.ctrlKey && e.key.toLowerCase() === 'r')) {
+    e.preventDefault();
+    window.privSearch.reload(currentTabId);
+  }
+});
+
+// Tab state updates received from main process
+window.privSearch.onTabUpdated((tab: any) => {
+  if (tab) {
+    currentTabId = tab.id;
+    if (tabPrimary) {
+      tabPrimary.querySelector('span')!.textContent = tab.title || 'Pestaña';
+    }
+    if (tab.url && tab.url !== 'about:blank') {
+      addressBar.value = tab.url;
+    }
+    updateNavButtons(tab.canGoBack, tab.canGoForward);
+  }
+});
+
+// Startup initialization
+syncActiveTab();
 refreshPrivacyStatus();
+updateNavButtons(false, false);
